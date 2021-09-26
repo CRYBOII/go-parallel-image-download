@@ -26,148 +26,136 @@ type Photos []struct {
 	ThumbnailURL string `json:"thumbnailUrl"`
 }
 
-type Image struct{
+type Image struct {
 	filePath string
-	img []byte
+	img      []byte
 }
 
 func main() {
 
-	dir := "myDownloadImage"+ time.Now().Format("15_04_05")
-	if _,err :=  os.Stat(dir); err != nil {
-		os.Mkdir(dir,os.ModeDir)
+	dir := "mypics" + time.Now().Format("15_04_05")
+	if _, err := os.Stat(dir); err != nil {
+		os.Mkdir(dir, os.ModeDir)
+
 	}
 
 	photos := Photos{}
 
-	err := getJson("https://jsonplaceholder.typicode.com/photos", &photos)
-
-	if err != nil {
-		log.Fatal(err)
+	if err := getJson("https://jsonplaceholder.typicode.com/photos", &photos); err != nil {
+		log.Fatal("Main :", err)
 	}
-   chImg := make(chan Image,len(photos))
-   counter := sync.WaitGroup{}
-   token := make(chan struct{},20)
-   for _, v := range photos {
-	   
 
-	   v := v
-	   counter.Add(1)	   
-      go func ()  {
+	chImg := make(chan Image)
 
-		defer	counter.Done()
+	token := make(chan struct{}, 2)
 
-		token <- struct{}{}
+	counter := sync.WaitGroup{}
+	for _, v := range photos {
 
-		img,err :=  downloadImg(v.ThumbnailURL)
-		<- token
-		if err != nil {
-			 log.Fatal(err)
-		}
-	 
-		
-	  
-		format,err := decodeImage(img)
+		counter.Add(1)
+
+		v := v
+		go func() {
+
+			defer counter.Done()
+
+			token <- struct{}{}
+
+			img, err := downloadImage(v.ThumbnailURL)
+
+			<-token
+			if err != nil {
+				log.Fatal(err)
+			}
+
+			format, err := decodeImage(img)
+			if err != nil {
+				log.Fatal(err)
+			}
+
+			filename := filepath.Join(dir, fmt.Sprintf("%d.%s", v.ID, format))
+			chImg <- Image{filePath: filename, img: img}
+
+		}()
+
+	}
+
+	go func() {
+
+		counter.Wait()
+		close(chImg)
+
+	}()
+
+	for v := range chImg {
+
+		err := saveImage(v.filePath, v.img)
+
 		if err != nil {
 			log.Fatal(err)
 		}
-		fileName := (filepath.Join(dir,fmt.Sprintf("%d.%s",v.ID,format)))
-		chImg <- Image{filePath: fileName,img: img}
-	
-	  }()
-	   
-   }
-   go func ()  {
 
-	counter.Wait()
-	close(chImg)
-	   
-   }()
-
-   for  v := range chImg {
-
-
-
-
-	err = saveImage(v.filePath,v.img)
-	 
-	if err != nil {
-		log.Println(err)
 	}
-	   
-   }
-
-
-
 
 }
 
-func saveImage(fileName string,img []byte)  error{
-	
-    f,err := os.Create(fileName)
+func saveImage(fileName string, img []byte) error {
 
-
+	f, err := os.Create(fileName)
 	if err != nil {
-return err
+		return err
 	}
 	defer f.Close()
-	 _,err = io.Copy(f,bytes.NewReader(img))
+	_, err = io.Copy(f, bytes.NewReader(img))
 
-	 if err != nil {
-return err
-	 }
-
-	 return nil
-	
-}
-
-func decodeImage(img []byte)   (string,error) {
-
-	_,format,err := image.Decode(bytes.NewReader(img))
-
-
-
-	return format ,err
-	
-}
-
-func downloadImg(url string) ([]byte,error) {
-
-	 res ,err := http.Get(url)
-
-	 if err != nil {
-		 return  nil,err
-	 }
-	defer res.Body.Close()
-
-	body ,err := ioutil.ReadAll(res.Body)
 	if err != nil {
-		return  nil,err
+		return err
 	}
-	return body ,nil
+
+	return nil
+
 }
 
-func getJson(url string, structType interface{}) error {
+func decodeImage(img []byte) (string, error) {
+
+	_, f, err := image.Decode(bytes.NewReader(img))
+
+	return f, err
+
+}
+func downloadImage(url string) ([]byte, error) {
 	res, err := http.Get(url)
 	if err != nil {
-		return  fmt.Errorf("Get json : %v",err)
+		return nil, err
 	}
 	defer res.Body.Close()
 
-	switch v := structType.(type){
-	case *Photos : 
-
-	decoder := json.NewDecoder(res.Body)
-	results := structType.(*Photos)
-	decoder.Decode(results)
-	   return nil 
-    default : 
-    return fmt.Errorf("getJson : Type are not accepted %v",v)
-
+	body, err := ioutil.ReadAll(res.Body)
+	if err != nil {
+		return nil, err
 	}
-        
-	
 
+	return body, nil
 
+}
+
+func getJson(url string, stype interface{}) error {
+
+	res, err := http.Get(url)
+
+	if err != nil {
+		return fmt.Errorf("GetJson : %v", err)
+	}
+	defer res.Body.Close()
+
+	switch v := stype.(type) {
+	case *Photos:
+		decoder := json.NewDecoder(res.Body)
+		results := stype.(*Photos)
+		decoder.Decode(results)
+		return nil
+	default:
+		return fmt.Errorf("get Json : %v", v)
+	}
 
 }
